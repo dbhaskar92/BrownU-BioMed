@@ -211,8 +211,8 @@ function [w_cells, w_borders, w_overlap] = watershed_segment(image, bin, dp)
     DL = watershed(D);
     bgm = DL == 0;
     
-	watershed_ridge = image;
-	watershed_ridge(imdilate(bgm, ones(3, 3))) = 255;
+    watershed_ridge = image;
+    watershed_ridge(imdilate(bgm, ones(3, 3))) = 255;
     
     gradmag2 = imimposemin(gradmag, bgm | bin);
     L = watershed(gradmag2);
@@ -224,10 +224,10 @@ function [w_cells, w_borders, w_overlap] = watershed_segment(image, bin, dp)
 	w_cells = zeros(size(L, 1), size(L, 2));
     
     for i = 1 : classes
-		tmp = zeros(size(L, 1), size(L, 2));
-		tmp(L == i) = 1;
-		w_cells(L == i) = i;
-		w_borders(bwperim(tmp) > 0) = i;
+        tmp = zeros(size(L, 1), size(L, 2));
+        tmp(L == i) = 1;
+        w_cells(L == i) = i;
+        w_borders(bwperim(tmp) > 0) = i;
     end
 
     % Remove segmentations overlapping border
@@ -237,11 +237,11 @@ function [w_cells, w_borders, w_overlap] = watershed_segment(image, bin, dp)
     w_overlap(imdilate(w_borders > 0, ones(3, 3))) = 255;
     
     if (usejava('desktop') == 1 && dp == 1)
-		figure
-		subplot(2,2,1), imagesc(gradmag), colorbar, title('Gradient Magnitude')
+        figure
+        subplot(2,2,1), imagesc(gradmag), colorbar, title('Gradient Magnitude')
         subplot(2,2,2), imshow(bin), title('Foreground Markers')
-		subplot(2,2,3), imshow(watershed_ridge), title('Background Markers')
-		subplot(2,2,4), imshow(w_overlap), title('Segmented Cell Boundary')
+        subplot(2,2,3), imshow(watershed_ridge), title('Background Markers')
+        subplot(2,2,4), imshow(w_overlap), title('Segmented Cell Boundary')
     end
     
 end
@@ -529,7 +529,7 @@ function [res] = find_clusters(XYCoords, minval, maxval, well, t_string)
 
     storeAllNeighbors = nan(1,3);
 
-    % Decrement search radius
+    % Increment search radius
     figure
     for threshold = minval:5:maxval
 

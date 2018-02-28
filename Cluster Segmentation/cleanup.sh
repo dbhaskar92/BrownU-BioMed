@@ -4,6 +4,8 @@
 # Delete CSV file
 rm -rf *.csv
 
+rm -rf *.png
+
 # Delete all subdirectories
 rm -rf BW_Mask
 rm -rf Segmented_Boundary

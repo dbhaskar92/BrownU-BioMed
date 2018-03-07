@@ -11,8 +11,8 @@ function [] = Segment_10X()
     
     close all;
 
-    nucleiImgs = dir(strcat('egf_XY1C1T', '*.tif'));
-    cytoplasmImgs = dir(strcat('egf_XY1C2T', '*.tif'));
+    nucleiImgs = dir(strcat('egf_xy1c1t', '*.tif'));
+    cytoplasmImgs = dir(strcat('egf_xy1c2t', '*.tif'));
 
     if (length(nucleiImgs) ~= length(cytoplasmImgs))
         disp('Number of images does not match.');
@@ -89,9 +89,9 @@ function [] = Segment_10X()
         
         % Remove objects entirely outside the central 900X900 region
         [R, C] = size(L);
-        r_start = (R - 900)/2;
+        r_start = (R - 1384)/2;
         r_end = R - r_start;
-        c_start = (C - 900)/2;
+        c_start = (C - 1384)/2;
         c_end = C - c_start;
         for j = 1 : classes
             tmp = zeros(size(L, 1), size(L, 2));
@@ -111,14 +111,14 @@ function [] = Segment_10X()
         % Create multichannel image showing nuclei (red), cytoplasm (green)
         % and segmented boundary (blue)
         green = Icytoplasm_processed./max(Icytoplasm_processed(:));
-        red = Inuclei_processed./max(Inuclei_processed(:));
+        red = 0.75*(Inuclei_processed./max(Inuclei_processed(:)));
         blue = zeros(size(green));
         blue(imdilate(bwperim(BWcytoplasm), ones(5,5))) = 1.0;
         overlap_img = cat(3, red, green, blue);
-        overlap_img(r_start, c_start:c_end, :) = 255;
-        overlap_img(r_end, c_start:c_end, :) = 255;
-        overlap_img(r_start:r_end, c_start, :) = 255;
-        overlap_img(r_start:r_end, c_end, :) = 255;
+        overlap_img(r_start-1:r_start+1, c_start:c_end, :) = 255;
+        overlap_img(r_end-1:r_end+1, c_start:c_end, :) = 255;
+        overlap_img(r_start:r_end, c_start-1:c_start+1, :) = 255;
+        overlap_img(r_start:r_end, c_end-1:c_end+1, :) = 255;
         imwrite(overlap_img, strcat('Overlap', filesep, 'egf_', well, '_T', t_string, '.png'), 'png');
         
         % Extract features and write pif file
@@ -208,8 +208,6 @@ function [res, bw, bw_overlap] = preprocess_cytoplasm(image, BWnuclei, dp)
     
     % Skeletonize cytoplasm (connect adjacent ones)
     bw = imclose(bw, strel('disk', 22));
-    
-    bw = imfill(bw, 'holes');
     
     % Clear small cells/clusters
     bw = bwareaopen(bw, 500);
@@ -347,10 +345,9 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
     end
     
     % Find clusters using nuclei and plot connectivity graph
-    graph_threshold = 120;
-    if dp > 0
-        find_clusters(nuclei_centroids, graph_threshold, well, t_string, dp);
-    end
+    graph_threshold = 110;
+    find_clusters(nuclei_centroids, graph_threshold, well, t_string, dp);
+
                                             
     w_borders_color = label2rgb(imdilate(segmented_borders, ones(5, 5)), 'lines', [1 1 1], 'shuffle');
     
@@ -358,7 +355,7 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
         if isnan(nuclei_centroids(k,1))
             continue
         end
-        w_borders_color = insertShape(w_borders_color, 'FilledCircle', [nuclei_centroids(k,1) nuclei_centroids(k,2), 10], 'color', 'red');
+        w_borders_color = insertShape(w_borders_color, 'FilledCircle', [nuclei_centroids(k,1) nuclei_centroids(k,2), 9], 'color', 'red');
     end
     
     % Assign cluster/cell ID, display segmented boundary and count nuclei
@@ -413,7 +410,7 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
                     
                     display_string = strcat('ID: ', int2str(j), ', Nuclei: ', int2str(num_nuclei));
                     txt = text(centroid(1), centroid(2), display_string);
-                    set(txt, 'fontsize', 12);
+                    set(txt, 'fontsize', 11);
                     
                 end
             end
@@ -568,26 +565,42 @@ function [] = find_clusters(XYCoords, threshold, well, t_string, dp)
     % Find cells that are present at this time frame (not nan)
     findPresent = ~isnan(XYCoords(:,1));
 
-    % Plot isolated nuclei positions in red
-    plot(XYCoords(findPresent,1), XYCoords(findPresent,2), 'ro', 'MarkerSize', 10);
+    % Plot isolated nuclei positions in black
+    plot(XYCoords(findPresent,1), XYCoords(findPresent,2), 'ko', 'MarkerSize', 6);
     hold on
 
-    % Plot cluster nuclei in blue
+    % Plot cluster nuclei
+    clc_map = lines(count);
     for n = 1:count
         fTemp = find(storeClusters(:,1) == n);
         if length(fTemp) > 1
-            plot(XYCoords(fTemp,1), XYCoords(fTemp,2), 'bo', 'MarkerSize', 10); 
+            plot(XYCoords(fTemp,1), XYCoords(fTemp,2), 'o', 'MarkerSize', 6, 'MarkerFaceColor', clc_map(n,:), 'MarkerEdgeColor', clc_map(n,:)); 
             hold on
         end
     end
 
     flinks = ~isnan(storeNeighbors(:,1));
     storeNeighbors = storeNeighbors(flinks,:);
+    
+    dist = zeros(length(storeNeighbors), 1);
+    
+    % Compute distances between nuclei in clusters
+    for l = 1:length(storeNeighbors)
+        x_coords = XYCoords(storeNeighbors(l,1:2),2);
+        y_coords = XYCoords(storeNeighbors(l,1:2),1);
+        xy1 = [x_coords(1) y_coords(1)];
+        xy2 = [x_coords(2) y_coords(2)];
+        dist(l,1) = norm(xy1 - xy2);
+    end
+    
+    dist_sorted = unique(sort(dist(:,1)));
+    CMap = colormap(flipud(bone(length(dist_sorted))));
 
     % Plot edges between nuclei in clusters
     for l = 1:length(storeNeighbors)
+        CMap_ind = dist_sorted == dist(l,1);
         plot(XYCoords(storeNeighbors(l,1:2),1), XYCoords(storeNeighbors(l,1:2),2), ...
-            '-', 'Color', 'blue');
+            '-', 'Color', CMap(CMap_ind,:));
     end
     hold off
     axis equal;

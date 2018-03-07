@@ -398,7 +398,6 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
                         n_area = nuclei_area(k);
                       
                         if tmp(floor(ny), floor(nx)) == 1 
-                           
                             % Calculate number of nuclei 
                             % Typical nucleus size = 400 um^2 = 950 pixels
                             if n_area < 1000
@@ -406,7 +405,6 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
                             else
                                 num_nuclei = num_nuclei + ceil(n_area/1000);
                             end
-
                         end
                         
                     end
@@ -458,19 +456,19 @@ end
 function [] = write_pif_file(segmentation_mat, t_string, well)
 
     cluster_ids = unique(nonzeros(segmentation_mat));
-	numPIFrows = nnz(segmentation_mat);
+    numPIFrows = nnz(segmentation_mat);
 
-	PIF_data = zeros(numPIFrows, 5);
-	ind = 1;
+    PIF_data = zeros(numPIFrows, 5);
+    ind = 1;
     for i = 1 : length(cluster_ids)
-		[rows, cols] = find(segmentation_mat == cluster_ids(i));
+        [rows, cols] = find(segmentation_mat == cluster_ids(i));
         for cnt = 1 : length(rows)
-			PIF_data(ind, 1) = cluster_ids(i);
-			PIF_data(ind, 2) = rows(cnt);
-			PIF_data(ind, 3) = rows(cnt);
-			PIF_data(ind, 4) = cols(cnt);
-			PIF_data(ind, 5) = cols(cnt);
-			ind = ind + 1;
+            PIF_data(ind, 1) = cluster_ids(i);
+            PIF_data(ind, 2) = rows(cnt);
+            PIF_data(ind, 3) = rows(cnt);
+            PIF_data(ind, 4) = cols(cnt);
+            PIF_data(ind, 5) = cols(cnt);
+            ind = ind + 1;
         end
     end
     
@@ -558,7 +556,6 @@ function [] = find_clusters(XYCoords, threshold, well, t_string, dp)
     % Rename clusters in sequential order
     count = 1;
     for k = 1:size(storeClusters,1)
-
         findCluster = find(storeClusters(:,1) == k);
 
         if isempty(findCluster) == 1

@@ -1,13 +1,13 @@
 %
 % Segment and quantify cell clusters
 % Channel 1: nuclei (RFP), Channel 2: cytoplasm (GFP)
-% Imaging time: 60 hrs (15 min intervals), 240 frames
-% Image properties: 0.32 um/px, 12 bit, 2560 X 2160 pixels, 20 X zoom
+% Imaging time: 60 hrs, 241 frames
+% Image properties: 0.65 um/px, 12 bit, 2560 X 2160 pixels, 10 X zoom
 % Author: Dhananjay Bhaskar <dhananjay_bhaskar@brown.edu>
-% Last Modified: Feb 07, 2018
+% Last Modified: Mar 08, 2018
 %
 
-function [] = ClusterSegment()
+function [] = Segment_10X()
     
     close all;
 
@@ -42,10 +42,8 @@ function [] = ClusterSegment()
     mkdir('BW_Mask');
     mkdir(strcat('BW_Mask', filesep, 'Nuclei'));
     mkdir(strcat('BW_Mask', filesep, 'Cytoplasm'));
-    mkdir('Watershed_Overlap');
+    mkdir('Overlap');
     mkdir('Segmented_Boundary');
-    mkdir('Betti_Intervals');
-    mkdir('Persistence_Homology');
     
     for i = 1 : length(nucleiImgs)
 
@@ -58,7 +56,7 @@ function [] = ClusterSegment()
         Icytoplasmtime = str2double(Icytoplasmfname(end-2:end));
         Icytoplasm = imread(cytoplasmImgs(i).name);
         
-        % Get time
+        % Get frame number
         if (Inucleitime ~= Icytoplasmtime)
             warning("Error: Images numbers do not match!");
             exit();
@@ -66,14 +64,7 @@ function [] = ClusterSegment()
         t_string = sprintf('%03d', Inucleitime);
         
         % Display verbosity (0: auto - 3: detailed)
-        dp = 1;
-        
-        % Create folder for cell images
-        mkdir(strcat('egf_', well, '_T', t_string));
-        
-        if dp > 0
-            mkdir(strcat('Graph_', well, '_T', t_string));
-        end
+        dp = 0;
         
         % Convert to grayscale
         if size(Inuclei, 3) == 3
@@ -90,14 +81,51 @@ function [] = ClusterSegment()
         [Icytoplasm_processed, BWcytoplasm, BW_overlap] = preprocess_cytoplasm(Icytoplasm, BWnuclei, dp);
         imwrite(BW_overlap, strcat('BW_Mask', filesep, 'Cytoplasm', filesep, 'egf_', well, '_T', t_string, '.png'), 'png');
         
-        [segmented_cells, segmented_borders, w_overlap] = watershed_segment(Icytoplasm_processed, BWcytoplasm, dp);
-        imwrite(w_overlap, strcat('Watershed_Overlap', filesep, 'egf_', well, '_T', t_string, '.png'), 'png');
+        % Label cytoplasm segmentation
+        L = bwlabel(BWcytoplasm);
+        classes = numel(unique(reshape(L, [1, numel(L)])));
+        w_borders = zeros(size(L, 1), size(L, 2));
+        w_cells = zeros(size(L, 1), size(L, 2));
+        
+        % Remove objects entirely outside the central 900X900 region
+        [R, C] = size(L);
+        r_start = (R - 900)/2;
+        r_end = R - r_start;
+        c_start = (C - 900)/2;
+        c_end = C - c_start;
+        for j = 1 : classes
+            tmp = zeros(size(L, 1), size(L, 2));
+            tmp(L == j) = 1;
+            sub_mat = tmp(r_start:r_end, c_start:c_end);
+            if ~any(sub_mat(:))
+                continue
+            end
+            w_cells(L == j) = j;
+            w_borders(bwperim(tmp) > 0) = j;
+        end
+
+        % Remove segmentations overlapping image border
+        w_cells(ismember(w_cells, union(w_cells(:, [1 end]), w_cells([1 end], :)))) = 0;
+        w_borders(ismember(w_borders, union(w_borders(:, [1 end]), w_borders([1 end], :)))) = 0;
+        
+        % Create multichannel image showing nuclei (red), cytoplasm (green)
+        % and segmented boundary (blue)
+        green = Icytoplasm_processed./max(Icytoplasm_processed(:));
+        red = Inuclei_processed./max(Inuclei_processed(:));
+        blue = zeros(size(green));
+        blue(imdilate(bwperim(BWcytoplasm), ones(5,5))) = 1.0;
+        overlap_img = cat(3, red, green, blue);
+        overlap_img(r_start, c_start:c_end, :) = 255;
+        overlap_img(r_end, c_start:c_end, :) = 255;
+        overlap_img(r_start:r_end, c_start, :) = 255;
+        overlap_img(r_start:r_end, c_end, :) = 255;
+        imwrite(overlap_img, strcat('Overlap', filesep, 'egf_', well, '_T', t_string, '.png'), 'png');
         
         % Extract features and write pif file
-        feats = extract_features(t_string, well, segmented_cells, segmented_borders, BWnuclei, dp);
+        feats = extract_features(t_string, well, w_cells, w_borders, BWnuclei, dp);
         dlmwrite(CSVfile, feats, '-append', 'precision', '%.3f', 'delimiter', ',');
-        
-        % pause before processing next image
+
+        % Pause before processing next image
         if dp > 0
             pause
         end
@@ -117,19 +145,24 @@ function [res] = grayscale_remap(image, percentile)
 end
 
 function [res, bw, bw_overlap] = preprocess_nuclei(image, dp)
-
-    res = medfilt2(grayscale_remap(medfilt2(image), 99));
     
-    bw = imbinarize(res, 'adaptive', 'Sensitivity', 0.4);
+    % Rescale intensities
+    res = medfilt2(grayscale_remap(medfilt2(image), 98.8));
 
-    bw = bwareaopen(bw, 250);
+    % Binarize
+    bw = imbinarize(res, 'adaptive', 'Sensitivity', 0.50);
     
+    % Remove nuclei smaller than this size
+    bw = bwareaopen(bw, 20);
+    
+    % Fill holes
     bw = imfill(bw, 'holes');
     
+    % Expand nuclei
     bw = imopen(bw, strel('disk', 5));
     
     bw_overlap = res;
-    bw_overlap(imdilate(bwperim(bw), ones(3, 3))) = 255;
+    bw_overlap(imdilate(bwperim(bw), ones(5,5))) = 255;
     
     if (usejava('desktop') == 1 && dp > 0)
         figure
@@ -146,38 +179,49 @@ end
 
 function [res, bw, bw_overlap] = preprocess_cytoplasm(image, BWnuclei, dp)
 
-    I = grayscale_remap(medfilt2(image), 99.9);
+    % Rescale intensities
+    I = grayscale_remap(medfilt2(image), 99);
 
+    % Estimate background (PARAM)
     background = imopen(I, strel('disk', 200));
-    
     h = fspecial('gaussian', 10, 0.9);
     background = imfilter(background, h, 'replicate');
     
-    nuclei_seg = regionprops(BWnuclei, 'Centroid');
-    nuclei_centroids = cat(1, nuclei_seg.Centroid);
-    nuclei_centroids = round(nuclei_centroids);
-
+    % Remove background
     res = I - background;
     res_bin = imadjust(res);
+    
+    % Clamp negative intensities to 0
     res(res < 0.0) = 0;
     res_bin(res_bin < 0.0) = 0;
     
-    BWnuclei_closed = imclose(BWnuclei, strel('disk', 100));  
+    % Skeletonize nulei (connect adjacent ones)
+    BWnuclei_closed = imclose(BWnuclei, strel('disk', 17));  
+    
+    % Remove nuclei touching boundary
     BWnuclei_closed = imclearborder(BWnuclei_closed);
-    bw = activecontour(res_bin, BWnuclei_closed, 1000, 'Chan-Vese');
+    
+    % Expand binary nuclei markers
+    bw = activecontour(res_bin, BWnuclei_closed, 200, 'Chan-Vese');
     
     bw = medfilt2(bw);
     
-    bw = imclose(bw, strel('disk', 50));
+    % Skeletonize cytoplasm (connect adjacent ones)
+    bw = imclose(bw, strel('disk', 22));
+    
     bw = imfill(bw, 'holes');
     
-    % clear cells/clusters smaller than 256 um^2
-    bw = bwareaopen(bw, 2500);
+    % Clear small cells/clusters
+    bw = bwareaopen(bw, 500);
     
     L = bwlabel(bw, 4);
     [rows, cols] = size(L);
     bw = zeros(rows, cols);
-    
+
+    % Remove segmentations without nuclei inside
+    nuclei_seg = regionprops(BWnuclei, 'Centroid');
+    nuclei_centroids = cat(1, nuclei_seg.Centroid);
+    nuclei_centroids = round(nuclei_centroids);
     for k = 1 : size(nuclei_centroids)
         if isnan(nuclei_centroids(k,1))
             continue
@@ -190,8 +234,9 @@ function [res, bw, bw_overlap] = preprocess_cytoplasm(image, BWnuclei, dp)
         end
     end
     
+    % Display results
     bw_overlap = res;
-    bw_overlap(imdilate(bwperim(bw), ones(3, 3))) = 255;
+    bw_overlap(imdilate(bwperim(bw), ones(5, 5))) = 255;
 
     if (usejava('desktop') == 1 && dp > 0)
         figure
@@ -209,76 +254,14 @@ function [res, bw, bw_overlap] = preprocess_cytoplasm(image, BWnuclei, dp)
 
 end
 
-function [w_cells, w_borders, w_overlap] = watershed_segment(image, bin, dp)
-    
-    sigma = 2;
-    smoothimage = imgaussfilt(image, sigma);
-    [gradmag, ~] = imgradient(smoothimage, 'CentralDifference');
-    
-    % background markers
-    D = bwdist(bin);
-    DL = watershed(D);
-    bgm = DL == 0;
-
-    watershed_ridge = image;
-    watershed_ridge(imdilate(bgm, ones(3, 3))) = 255;
-    
-    gradmag2 = imimposemin(gradmag, bgm | bin);
-    L = watershed(gradmag2);
-    
-    w_overlap = image;
-    
-    classes = numel(unique(reshape(L, [1, numel(L)])));
-    w_borders = zeros(size(L, 1), size(L, 2));
-    w_cells = zeros(size(L, 1), size(L, 2));
-    
-    for i = 1 : classes
-		tmp = zeros(size(L, 1), size(L, 2));
-		tmp(L == i) = 1;
-		w_cells(L == i) = i;
-		w_borders(bwperim(tmp) > 0) = i;
-    end
-
-    % Remove segmentations overlapping border
-    w_cells(ismember(w_cells, union(w_cells(:, [1 end]), w_cells([1 end], :)))) = 0;
-    w_borders(ismember(w_borders, union(w_borders(:, [1 end]), w_borders([1 end], :)))) = 0;
-    
-    w_overlap(imdilate(w_borders > 0, ones(3, 3))) = 255;
-    
-    if (usejava('desktop') == 1 && dp > 0)
-        figure
-        subplot(2,2,1), imagesc(gradmag), colorbar, title('Gradient Magnitude')
-        subplot(2,2,2), imshow(bin), title('Foreground Markers')
-        subplot(2,2,3), imshow(watershed_ridge), title('Background Markers')
-        subplot(2,2,4), imshow(w_overlap), title('Segmented Cell Boundary')
-    end
-    
-    if dp == 3
-        imwrite(watershed_ridge, 'C2_4_BG_Markers.png');
-        imwrite(w_overlap, 'C2_5_Watershed_Segmentation.png');
-    end
-    
-end
-
 
 function [result] = extract_features(t_string, well, segmented_cells, segmented_borders, BWnuclei, dp)
-
-    % Add external libraries to path
-    javaaddpath('./lib/javaplex.jar');
-    import edu.stanford.math.plex4.*;
-    javaaddpath('./lib/plex-viewer.jar');
-    import edu.stanford.math.plex_viewer.*;
-
-    cd './utility';
-    addpath(pwd);
-    cd '..';
-
+    
     % Compute features from cytoplasm segmentation
-    seg = regionprops(segmented_cells, 'Centroid', 'BoundingBox', 'Area', 'Perimeter', 'Extent', 'Solidity', ...
+    seg = regionprops(segmented_cells, 'Centroid', 'Area', 'Perimeter', 'Extent', 'Solidity', ...
     'EquivDiameter', 'MajorAxisLength', 'MinorAxisLength', 'ConvexImage', 'Eccentricity');
     
     centroids = cat(1, seg.Centroid);
-    bboxes = cat(1, seg.BoundingBox);
     area = [seg.Area];
     perim = [seg.Perimeter];
     extent = [seg.Extent];
@@ -332,7 +315,7 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
                     lgd = legend('Box Count', 'Space-filling Count', 'Regression', 'Location', 'best');
                     lgd.FontSize = 17;
                     title(strcat('\beta_1 = ', string(beta_1)))
-                    set(gca, 'FontSize', 18, 'FontName', 'Myriad Pro');
+                    set(gca, 'FontSize', 12);
                     sfname = strcat('egf_', well, '_T', t_string, filesep, 'Cluster_', int2str(j), '.png');
                     print(sfname, '-dpng');
                 end
@@ -350,59 +333,24 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
     compactness = sqrt((4*area)/pi)./maj_axis;
     convexity = convex_perimeter./perim;
     circularity = (4*pi*area)./(perim.^2);
-        
-    nuclei_seg = regionprops(BWnuclei, 'Centroid');
+    
+    % Compute centroids and area for nuclei
+    nuclei_seg = regionprops(BWnuclei, 'Centroid', 'Area');
     nuclei_centroids = cat(1, nuclei_seg.Centroid);
+    nuclei_area = [nuclei_seg.Area];
     
-    % Perform TDA
-    max_dimension = 2;
-    max_filtration_value = 200;
-    num_divisions = 1000;
+    % Plot histogram of nuclei area
+    if (usejava('desktop') == 1 && dp == 1)
+        figure
+        cdfplot(nuclei_area);
+        title('Area of nuclei (pixels)');
+    end
     
-    % Find clusters using nuclei positions and plot connectivity graph
-    min_thres_val = 100;
-    max_thres_val = 200;
+    % Find clusters using nuclei and plot connectivity graph
+    graph_threshold = 120;
     if dp > 0
-        find_clusters(nuclei_centroids, min_thres_val, max_thres_val, well, t_string, dp);
+        find_clusters(nuclei_centroids, graph_threshold, well, t_string, dp);
     end
-    
-    % Generate Vietoris-Rips stream
-    stream = api.Plex4.createVietorisRipsStream(nuclei_centroids, max_dimension, max_filtration_value, num_divisions);
-    % Calculate persistence
-    persistence = api.Plex4.getModularSimplicialAlgorithm(max_dimension, 2);
-    % Calculate intervals
-    intervals = persistence.computeIntervals(stream);
-    
-    % Plot Betti intervals
-    options.filename = strcat('Betti-egf-', well, '-T', t_string, '.png');
-    options.max_filtration_value = max_filtration_value;
-    options.max_dimension = max_dimension - 1;
-    figH = plot_barcodes(intervals, options);
-    if  dp == 0
-        set(figH, 'Visible', 'off');
-    end
-    set(figH, 'Name', strcat('Barcodes ', t_string, ' frame'), 'NumberTitle', 'off')
-    system('mv Betti-*.png Betti_Intervals/')
-    
-    % Generate persistence plot
-    figP = figure('Name', strcat('Persistence ', t_string,' frame'), 'NumberTitle', 'off');
-    if dp == 0
-        set(figP, 'Visible', 'off');
-    end
-    % Betti 0
-    startendpts0 = homology.barcodes.BarcodeUtility.getEndpoints(intervals, 0, false);
-    % Betti 1
-    startendpts1 = homology.barcodes.BarcodeUtility.getEndpoints(intervals, 1, false);
-    plot(startendpts0(:,1), startendpts0(:,2), 'ro'); hold on
-    % If 2-simplex is present                                           
-    if ~isempty(startendpts1)
-        plot(startendpts1(:,1), startendpts1(:,2), 'bo')
-    end
-    plot(0:200, 0:200, 'k-')
-    xlabel('Start \epsilon')
-    ylabel('End \epsilon') 
-    hold off
-    print(strcat('Persistence_Homology', filesep, 'egf_', well, '_T', t_string, '.png'), '-dpng');
                                             
     w_borders_color = label2rgb(imdilate(segmented_borders, ones(5, 5)), 'lines', [1 1 1], 'shuffle');
     
@@ -414,6 +362,8 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
     end
     
     % Assign cluster/cell ID, display segmented boundary and count nuclei
+    nuclei_per_cluster = zeros(size(seg, 1), 1);
+    
     if (usejava('desktop') == 1)
 
         h = figure();
@@ -432,12 +382,11 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
             tmp = zeros(size(segmented_cells, 1), size(segmented_cells, 2));
             tmp(segmented_cells == j) = 1;
             
-            struct_array = regionprops(tmp, 'centroid', 'boundingbox');
+            struct_array = regionprops(tmp, 'centroid');
             if ~isempty(struct_array) && isfield(struct_array, 'Centroid')
                 if ~isempty(struct_array.Centroid) && numel(extractfield(struct_array, 'Centroid')) == 2
                     
                     centroid = cat(1, struct_array.Centroid);
-                    rect = struct_array.BoundingBox;
                     num_nuclei = 0;
                     
                     for k = 1 : size(nuclei_seg)
@@ -446,46 +395,46 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
                         end
                         nx = nuclei_centroids(k,1);
                         ny = nuclei_centroids(k,2);
-                        if nx > rect(1) && nx < rect(1) + rect(3)
-                            if ny > rect(2) && ny < rect(2) + rect(4)
+                        n_area = nuclei_area(k);
+                      
+                        if tmp(floor(ny), floor(nx)) == 1 
+                           
+                            % Calculate number of nuclei 
+                            % Typical nucleus size = 400 um^2 = 950 pixels
+                            if n_area < 1000
                                 num_nuclei = num_nuclei + 1;
+                            else
+                                num_nuclei = num_nuclei + ceil(n_area/1000);
                             end
+
                         end
+                        
                     end
+                    
+                    nuclei_per_cluster(j) = num_nuclei;
                     
                     display_string = strcat('ID: ', int2str(j), ', Nuclei: ', int2str(num_nuclei));
                     txt = text(centroid(1), centroid(2), display_string);
-                    set(txt, 'fontsize', 16, 'FontName', 'Myriad Pro');
+                    set(txt, 'fontsize', 12);
                     
                 end
             end
             
         end
+        
         print(strcat('Segmented_Boundary', filesep, 'egf_', well, '_T', t_string, '.png'), '-dpng');
 
     end
     
-    % Count number of nuclei inside each cell (again) and collate features
+    % Collate features
     cnt = 1;
     result = [];
     segmentations = zeros(size(segmented_cells,1), size(segmented_cells,2));
     
     for j = 1 : size(seg)
-        if isnan(centroids(j,1))
+        num_nuclei = nuclei_per_cluster(j);
+        if num_nuclei == 0
             continue
-        end
-        num_nuclei = 0;
-        for k = 1 : size(nuclei_seg)
-            if isnan(nuclei_centroids(k,1))
-                continue
-            end
-            nx = nuclei_centroids(k,1);
-            ny = nuclei_centroids(k,2);
-            if nx > bboxes(j,1) && nx < bboxes(j,1) + bboxes(j,3)
-                if ny > bboxes(j,2) && ny < bboxes(j,2) + bboxes(j,4)
-                    num_nuclei = num_nuclei + 1;
-                end
-            end
         end
         fnum = str2double(t_string);
         wnum = str2double(well(2:end));
@@ -509,10 +458,10 @@ end
 function [] = write_pif_file(segmentation_mat, t_string, well)
 
     cluster_ids = unique(nonzeros(segmentation_mat));
-    numPIFrows = nnz(segmentation_mat);
+	numPIFrows = nnz(segmentation_mat);
 
-    PIF_data = zeros(numPIFrows, 5);
-    ind = 1;
+	PIF_data = zeros(numPIFrows, 5);
+	ind = 1;
     for i = 1 : length(cluster_ids)
 		[rows, cols] = find(segmentation_mat == cluster_ids(i));
         for cnt = 1 : length(rows)
@@ -525,7 +474,7 @@ function [] = write_pif_file(segmentation_mat, t_string, well)
         end
     end
     
-    PIFname = strcat('egf_', well, '_T', t_string, filesep, 'Cell_Imgs.pif');
+    PIFname = strcat('egf_', well, '_T', t_string, '.pif');
     fileID = fopen(PIFname, 'w');
     cnt = 1;
     
@@ -539,9 +488,7 @@ function [] = write_pif_file(segmentation_mat, t_string, well)
 end
 
 
-function [res] = find_clusters(XYCoords, minval, maxval, well, t_string, dp)
-
-    NumCol = maxval - minval + 30;
+function [] = find_clusters(XYCoords, threshold, well, t_string, dp)
 
     % Initialize cluster
     storeClusters = repmat(1:size(XYCoords,1), 1, 1);
@@ -550,131 +497,107 @@ function [res] = find_clusters(XYCoords, minval, maxval, well, t_string, dp)
     % Store NaN locations & copy NaN locations to storeClusters
     storeNaN = ~isnan(XYCoords);
     storeClusters = storeClusters.*storeNaN;
-    storeClusters(storeClusters==0) = NaN;
-
-    storeAllNeighbors = nan(1,3);
+    storeClusters(storeClusters == 0) = NaN;
 
     h = figure();
     if dp == 0
         set(h, 'Visible', 'off');
     end
     
-    % Decrement search radius
-    for threshold = minval:5:maxval
+    counter = 1;
 
-        counter = 1;
+    % Calculate and generate storeClusters matrix
+    storeNeighbors = nan(size(XYCoords,1), 3);
 
-        % Calculate and generate storeClusters matrix
-        storeNeighbors = nan(size(XYCoords,1), 3);
-
-        % Compute distances and cluster cells if they are within threshold
-        for i = 1:(size(XYCoords,1)-1)
+    % Compute distances and cluster cells if they are within threshold
+    for i = 1:(size(XYCoords,1)-1)
             
-            if isnan(XYCoords(i,1)) == 1
+        if isnan(XYCoords(i,1)) == 1
+            continue
+        end
+            
+        for j = (i+1):size(XYCoords,1)
+
+            if isnan(XYCoords(j,1)) == 1
                 continue
             end
-            
-            for j = (i+1):size(XYCoords,1)
-                
-                if isnan(XYCoords(j,1)) == 1
-                    continue
-                end
 
-                x1 = XYCoords(i,1);
-                x2 = XYCoords(j,1);
-                y1 = XYCoords(i,2);
-                y2 = XYCoords(j,2);
+            x1 = XYCoords(i,1);
+            x2 = XYCoords(j,1);
+            y1 = XYCoords(i,2);
+            y2 = XYCoords(j,2);
 
-                Distance = sqrt((x2-x1)^2+(y2-y1)^2);
+            Distance = sqrt((x2-x1)^2+(y2-y1)^2);
 
-                if Distance <= threshold
+            if Distance <= threshold
 
-                    storeNeighbors(counter,1) = i;
-                    storeNeighbors(counter,2) = j;
-                    storeNeighbors(counter,3) = threshold;
+                storeNeighbors(counter,1) = i;
+                storeNeighbors(counter,2) = j;
+                storeNeighbors(counter,3) = threshold;
 
-                    % what clusters do the two cells originally belong to?
-                    Cluster_i = storeClusters(i,1);
-                    Cluster_j = storeClusters(j,1);
+                % what clusters do the two cells originally belong to?
+                Cluster_i = storeClusters(i,1);
+                Cluster_j = storeClusters(j,1);
 
-                    % what other cells belong to Cluster_i and Cluster_j?
-                    findCellsWithin_i = storeClusters(:,1)==Cluster_i;
-                    findCellsWithin_j = storeClusters(:,1)==Cluster_j;
+                % what other cells belong to Cluster_i and Cluster_j?
+                findCellsWithin_i = storeClusters(:,1)==Cluster_i;
+                findCellsWithin_j = storeClusters(:,1)==Cluster_j;
 
-                    % rename all clusters into one ID
-                    storeClusters(findCellsWithin_i,1) = Cluster_i;
-                    storeClusters(findCellsWithin_j,1) = Cluster_i;
-                    
-                    counter = counter + 1;
-                    
-                end
+                % rename all clusters into one ID
+                storeClusters(findCellsWithin_i,1) = Cluster_i;
+                storeClusters(findCellsWithin_j,1) = Cluster_i;
+
+                counter = counter + 1;
 
             end
-            
-        end
 
-        % rename clusters in sequential order
-        count = 1;
-        for k = 1:size(storeClusters,1)
-            
-            findCluster = find(storeClusters(:,1) == k);
-            
-            if isempty(findCluster) == 1
-                continue
-            end
-            storeClusters(findCluster,1) = count;
-            count = count + 1;
-            
         end
-
-        % find cells that are present at this time frame (not nan)
-        findPresent = ~isnan(XYCoords(:,1));
         
-        % plot nuclei positions in red
-        plot(XYCoords(findPresent,1), XYCoords(findPresent,2), 'ro', 'MarkerSize', 10);
-        hold on
-        
-        % plot cluster nuclei in blue
-        for n = 1:count
-            
-            fTemp = find(storeClusters(:,1) == n);
-
-            if length(fTemp) > 1
-                plot(XYCoords(fTemp,1), XYCoords(fTemp,2), 'bo', 'MarkerSize', 10); 
-                hold on
-            end
-            
-        end
-
-        flinks = ~isnan(storeNeighbors(:,1));
-        storeNeighbors = storeNeighbors(flinks,:);
-        
-        cmapk = flipud(cbrewer('seq', 'Greys', NumCol, 'PCHIP'));
-        
-        % plot edges between nuclei in clusters
-        for l = 1:length(storeNeighbors)
-            plot(XYCoords(storeNeighbors(l,1:2),1), XYCoords(storeNeighbors(l,1:2),2), ...
-                '-', 'Color', cmapk(threshold-minval+1,:));
-        end
-        hold off
-        axis equal;
-        title(strcat('Number of cells/clusters found:', int2str(count)));
-        set(gca, 'Ydir', 'reverse');
-        
-        storeAllNeighbors = [storeAllNeighbors; storeNeighbors];
-        
-        if dp >= 2
-            drawnow;
-            sfname = strcat('Graph_', well, '_T', t_string, filesep, 'Graph_Threshold_', int2str(threshold), '.png');
-            print(sfname, '-dpng');
-            pause(1);
-        elseif dp == 1
-            sfname = strcat('Graph_', well, '_T', t_string, filesep, 'Graph_Threshold_', int2str(threshold), '.png');
-            print(sfname, '-dpng');
-        end
-
     end
     
-    res = storeAllNeighbors(2:length(storeAllNeighbors),:);
+    % Rename clusters in sequential order
+    count = 1;
+    for k = 1:size(storeClusters,1)
+
+        findCluster = find(storeClusters(:,1) == k);
+
+        if isempty(findCluster) == 1
+            continue
+        end
+        storeClusters(findCluster,1) = count;
+        count = count + 1;
+    end
+
+    % Find cells that are present at this time frame (not nan)
+    findPresent = ~isnan(XYCoords(:,1));
+
+    % Plot isolated nuclei positions in red
+    plot(XYCoords(findPresent,1), XYCoords(findPresent,2), 'ro', 'MarkerSize', 10);
+    hold on
+
+    % Plot cluster nuclei in blue
+    for n = 1:count
+        fTemp = find(storeClusters(:,1) == n);
+        if length(fTemp) > 1
+            plot(XYCoords(fTemp,1), XYCoords(fTemp,2), 'bo', 'MarkerSize', 10); 
+            hold on
+        end
+    end
+
+    flinks = ~isnan(storeNeighbors(:,1));
+    storeNeighbors = storeNeighbors(flinks,:);
+
+    % Plot edges between nuclei in clusters
+    for l = 1:length(storeNeighbors)
+        plot(XYCoords(storeNeighbors(l,1:2),1), XYCoords(storeNeighbors(l,1:2),2), ...
+            '-', 'Color', 'blue');
+    end
+    hold off
+    axis equal;
+    title(strcat('Number of cells/clusters found:', int2str(count)));
+    set(gca, 'Ydir', 'reverse');
+
+    sfname = strcat('Graph_', well, '_T', t_string, '.png');
+    print(sfname, '-dpng');
 
 end

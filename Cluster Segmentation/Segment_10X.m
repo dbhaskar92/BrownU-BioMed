@@ -87,7 +87,7 @@ function [] = Segment_10X()
         w_borders = zeros(size(L, 1), size(L, 2));
         w_cells = zeros(size(L, 1), size(L, 2));
         
-        % Remove objects entirely outside the central 900X900 region
+        % Remove objects entirely outside the central 900 um X 900 um region
         [R, C] = size(L);
         r_start = (R - 1384)/2;
         r_end = R - r_start;
@@ -288,9 +288,9 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
                 struct_array = regionprops(convex_hull, 'perimeter');
                 convex_perimeter(j) = struct_array.Perimeter;
                 
-                xmin = max(0, floor(rect(2)-1));
+                xmin = max(1, floor(rect(2)-1));
                 xmax = min(size(segmented_cells, 1), floor(rect(2)+rect(4)+1));
-                ymin = max(0, floor(rect(1)-1));
+                ymin = max(1, floor(rect(1)-1));
                 ymax = min(size(segmented_cells, 2), floor(rect(1)+rect(3)+1));
                 
                 subimg = tmp(xmin:xmax,ymin:ymax);
@@ -387,6 +387,7 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
                     num_nuclei = 0;
                     
                     for k = 1 : size(nuclei_seg)
+                    
                         if isnan(nuclei_centroids(k,1))
                             continue
                         end

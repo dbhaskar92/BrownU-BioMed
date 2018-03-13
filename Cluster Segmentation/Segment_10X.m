@@ -41,6 +41,7 @@ function [] = Segment_10X()
     mkdir('BW_Mask');
     mkdir(strcat('BW_Mask', filesep, 'Nuclei'));
     mkdir(strcat('BW_Mask', filesep, 'Cytoplasm'));
+    mkdir('PIF');
     mkdir('Graph');
     mkdir('Overlap');
     mkdir('Segmented_Boundary');
@@ -69,7 +70,9 @@ function [] = Segment_10X()
         dp = 1;
         
         % Create folder for time frame
-        mkdir(strcat('egf_', well, '_T', t_string));
+        if dp >= 2
+            mkdir(strcat('egf_', well, '_T', t_string));
+        end
         
         % Convert to grayscale
         if size(Inuclei, 3) == 3
@@ -92,7 +95,7 @@ function [] = Segment_10X()
         w_borders = zeros(size(L, 1), size(L, 2));
         w_cells = zeros(size(L, 1), size(L, 2));
         
-        % Remove objects entirely outside the central 900X900 region (1385)
+        % Remove objects entirely outside the central 900 um X 900 um region
         [R, C] = size(L);
         r_start = (R - 1384)/2;
         r_end = R - r_start;
@@ -292,15 +295,16 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
         tmp = zeros(size(segmented_cells, 1), size(segmented_cells, 2));
         tmp(segmented_cells == j) = 1;
         
-        struct_array = regionprops(tmp, 'centroid', 'conveximage', 'boundingbox');
+        struct_array = regionprops(tmp, 'centroid', 'boundingbox');
         
         if ~isempty(struct_array) && isfield(struct_array, 'Centroid')
             if ~isempty(struct_array.Centroid) && numel(extractfield(struct_array, 'Centroid')) == 2
                 
-                convex_hull = struct_array.ConvexImage;
+                convex_hull = bwconvhull(tmp);
                 rect = struct_array.BoundingBox;
-                struct_array = regionprops(convex_hull, 'perimeter');
-                convex_perimeter(j) = struct_array.Perimeter;
+                struct_array_pr = regionprops(convex_hull, 'perimeter');
+                cvx_perimeters = [struct_array_pr.Perimeter];
+                convex_perimeter(j) = cvx_perimeters(1);
                 
                 xmin = max(1, floor(rect(2)-1));
                 xmax = min(size(segmented_cells, 1), floor(rect(2)+rect(4)+1));
@@ -343,7 +347,7 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
     elongation = (maj_axis.^2 - min_axis.^2)./(maj_axis.^2 + min_axis.^2);
     frac_anisotropy = (maj_axis.^2 - min_axis.^2)./sqrt(maj_axis.^4 + min_axis.^4);
     compactness = sqrt((4*area)/pi)./maj_axis;
-    convexity = convex_perimeter./perim;
+    convexity = (convex_perimeter')./perim;
     circularity = (4*pi*area)./(perim.^2);
     
     % Compute centroids and area for nuclei
@@ -399,7 +403,7 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
     if ~isempty(startendpts1)
         plot(startendpts1(:,1), startendpts1(:,2), 'bo')
     end
-    plot(0:120, 0:120, 'k-')
+    plot(0:110, 0:110, 'k-')
     xlabel('Start \epsilon')
     ylabel('End \epsilon') 
     hold off
@@ -510,7 +514,6 @@ function [result] = extract_features(t_string, well, segmented_cells, segmented_
     
 end
 
-
 function [] = write_pif_file(segmentation_mat, t_string, well)
 
     cluster_ids = unique(nonzeros(segmentation_mat));
@@ -519,18 +522,18 @@ function [] = write_pif_file(segmentation_mat, t_string, well)
     PIF_data = zeros(numPIFrows, 5);
     ind = 1;
     for i = 1 : length(cluster_ids)
-	    [rows, cols] = find(segmentation_mat == cluster_ids(i));
+        [rows, cols] = find(segmentation_mat == cluster_ids(i));
         for cnt = 1 : length(rows)
-		    PIF_data(ind, 1) = cluster_ids(i);
-		    PIF_data(ind, 2) = rows(cnt);
-		    PIF_data(ind, 3) = rows(cnt);
-		    PIF_data(ind, 4) = cols(cnt);
-		    PIF_data(ind, 5) = cols(cnt);
-		    ind = ind + 1;
+            PIF_data(ind, 1) = cluster_ids(i);
+            PIF_data(ind, 2) = rows(cnt);
+            PIF_data(ind, 3) = rows(cnt);
+            PIF_data(ind, 4) = cols(cnt);
+            PIF_data(ind, 5) = cols(cnt);
+            ind = ind + 1;
         end
     end
     
-    PIFname = strcat('egf_', well, '_T', t_string, filesep, 'Cell_Imgs.pif');
+    PIFname = strcat('PIF', filesep, 'egf_', well, '_T', t_string, '_cells.pif');
     fileID = fopen(PIFname, 'w');
     cnt = 1;
     
@@ -645,7 +648,7 @@ function [] = find_clusters(XYCoords, threshold, well, t_string, dp)
     
     dist = zeros(length(storeNeighbors), 1);
     
-    % compute distances between nuclei in clusters
+    % Compute distances between nuclei in clusters
     for l = 1:length(storeNeighbors)
         x_coords = XYCoords(storeNeighbors(l,1:2),2);
         y_coords = XYCoords(storeNeighbors(l,1:2),1);
@@ -659,7 +662,7 @@ function [] = find_clusters(XYCoords, threshold, well, t_string, dp)
     %CMap = colormap(flipud(bone(length(dist_sorted))));
     CMap = cbrewer('seq', 'Greys', length(dist_sorted), 'PCHIP');
     
-    % plot edges between nuclei in clusters
+    % Plot edges between nuclei in clusters
     for l = 1:length(storeNeighbors)
         CMap_ind = dist_sorted == dist(l,1);
         plot(XYCoords(storeNeighbors(l,1:2),1), XYCoords(storeNeighbors(l,1:2),2), ...

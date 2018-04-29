@@ -1,6 +1,6 @@
 % 
 % Author: Dhananjay Bhaskar
-% Last Modified: April 28, 2018
+% Last Modified: April 15, 2018
 % Description: Collective cell migration and clustering
 % References:
 % Theodore Kolokolnikov (Dalhousie University)
@@ -13,18 +13,18 @@ rng(31337)
 % Params
 n = 100;                            % Number of particles
 boxsize = 10;                       % Simulation domain
-polarity_strength = 0.75 * 1e-2;    % Strength of random polarization vector
-adh_strength = 0.25 * 1e-2;         % Short range cell-cell adhesion strength
+polarity_strength = 0.3 * 1e-2;     % Strength of random polarization vector
+adh_strength = 3.0 * 1e-2;          % Short range cell-cell adhesion strength
 nbd_eps = 1.2;                      % Radius of neighborhood
 cell_cycle_duration = 50000;        % Duration of cell cycle
 polarity_duration = 2500;           % Time until repolarization
 contact_inhibition_threshold = 4;   % Cell density threshold to stop proliferation
 
-% Lennard-Jones attraction-repulsion kernel params
-cA = 0.0;
-cR = 1.25;       
-lA = 1.0;
-lR = 0.5;
+% Lennard-Jones kernel params
+cA = 4 * 0.5;   % Strength of long-range attraction
+cR = 4 * 2.0;   % Strength of short-range repulsion
+lA = 1.0;       % Attraction radius
+lR = 0.5;       % Repulsion radius
 
 cell_cycle_offset = 0.8 * cell_cycle_duration;
 cell_polarity_offset = 0.8 * polarity_duration;
@@ -75,21 +75,17 @@ while (itr <= end_time)
             p(j) = polarity_strength * (get_unif_rand(boxsize, 1) + 1i * get_unif_rand(boxsize, 1));
         end
 
-        % Modulate polarity by # neighbours
+        % Calculate number of neighbours
         num_nbd_cells = num_nbd(j);
         avg_num_neighbours = avg_num_neighbours + num_nbd(j);
-        if num_nbd_cells ~= 0   
-            p(j) = p(j) * (1/num_nbd_cells);
-        end
+        nearest_neighbours = r < nbd_eps;
+        neighbour_index = find(nearest_neighbours);
         
+        % Random cell polarity
         dz(j) = 0;
         if toggle_polarity == "on"
             dz(j) = dz(j) + p(j);
         end
-        
-        % Calculate number of neighbours
-        nearest_neighbours = r < nbd_eps;
-        neighbour_index = find(nearest_neighbours);
         
         % Directed adhesion force and Lennard-Jones type potential
         adh_vec = 0;
@@ -221,6 +217,7 @@ while (itr <= end_time)
         
     end
     
+    % Update timers
     p_timer = p_timer + 1;
     
     if toggle_cell_cycle == "on"

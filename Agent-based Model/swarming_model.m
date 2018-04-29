@@ -1,6 +1,6 @@
 % 
 % Author: Dhananjay Bhaskar
-% Last Modified: April 15, 2018
+% Last Modified: April 28, 2018
 % Description: Collective cell migration and clustering
 % References:
 % Theodore Kolokolnikov (Dalhousie University)
@@ -8,7 +8,7 @@
 %
 
 % Seed random number generator
-rng(1337)
+rng(31337)
 
 % Params
 n = 100;                            % Number of particles
@@ -19,6 +19,12 @@ nbd_eps = 1.2;                      % Radius of neighborhood
 cell_cycle_duration = 50000;        % Duration of cell cycle
 polarity_duration = 2500;           % Time until repolarization
 contact_inhibition_threshold = 4;   % Cell density threshold to stop proliferation
+
+% Lennard-Jones attraction-repulsion kernel params
+cA = 0.0;
+cR = 1.25;       
+lA = 1.0;
+lR = 0.5;
 
 cell_cycle_offset = 0.8 * cell_cycle_duration;
 cell_polarity_offset = 0.8 * polarity_duration;
@@ -48,7 +54,7 @@ end
 
 % Iteration number
 itr = 0;
-end_time = 1000 * 1e2;
+end_time = 1500 * 1e2;
 
 while (itr <= end_time)
 
@@ -63,17 +69,7 @@ while (itr <= end_time)
 
         k = [1:j-1, j+1:n];
         r = abs(z(j) - z(k));
-        F = 0;
         
-        % Attraction-Repulsion Kernel
-        cA = 0.0;
-        cR = 1.25;       
-        lA = 1.0;
-        lR = 0.5;
-        U = -cA*exp(-r./lA) + cR*exp(-r./lR);
-        U_grad = (cA/lA)*exp(-r./lA) - (cR/lR)*exp(-r./lR);
-        F = F - U_grad;
-
         % Repolarization
         if mod(p_timer(j), polarity_duration) == 0
             p(j) = polarity_strength * (get_unif_rand(boxsize, 1) + 1i * get_unif_rand(boxsize, 1));
@@ -85,9 +81,8 @@ while (itr <= end_time)
         if num_nbd_cells ~= 0   
             p(j) = p(j) * (1/num_nbd_cells);
         end
-
-        % Compute velocity of particle
-        dz(j) = (1.0/n) * sum( F.*(z(j)-z(k))./r );
+        
+        dz(j) = 0;
         if toggle_polarity == "on"
             dz(j) = dz(j) + p(j);
         end
@@ -96,8 +91,10 @@ while (itr <= end_time)
         nearest_neighbours = r < nbd_eps;
         neighbour_index = find(nearest_neighbours);
         
-        % Cell adhesion force
+        % Directed adhesion force and Lennard-Jones type potential
         adh_vec = 0;
+        LJ_vec = 0;
+        U = 0;
         for nn = 1 : length(neighbour_index)
             idx = neighbour_index(nn);
             ridx = idx;
@@ -105,6 +102,9 @@ while (itr <= end_time)
                 idx = idx + 1;
             end
             unit_vec = (z(idx) - z(j))/r(ridx);
+            U = U - cA * exp(-r(ridx)/lA) + cR * exp(-r(ridx)/lR);
+            F = (cA/lA) * exp(-r(ridx)/lA) - (cR/lR) * exp(-r(ridx)/lR);
+            LJ_vec = LJ_vec + F * unit_vec;
             if r(ridx) > 1.0
                 adh_vec = adh_vec + adh_strength * unit_vec;
             end
@@ -113,31 +113,36 @@ while (itr <= end_time)
             idx = xbordercells(nn);
             if j == idx
                 unit_vec = xborder_unit_vec(nn);
+                dist = xborder_radii(nn);
+                U = U - cA * exp(-dist/lA) + cR * exp(-dist/lR);
+                F = (cA/lA) * exp(-dist/lA) - (cR/lR) * exp(-dist/lR);
+                LJ_vec = LJ_vec + F * unit_vec;
                 if xborder_radii(nn) > 1.0
                     adh_vec = adh_vec + adh_strength * unit_vec;    
                 end
             end
         end
-        dz(j) = dz(j) + adh_vec;
+        dz(j) = dz(j) + adh_vec + (1.0/100) * LJ_vec;
         
         avg_speed = avg_speed + abs(dz(j));
 
     end
     
     avg_num_neighbours = avg_num_neighbours/n;
+    avg_speed = (avg_speed/n)*100;
 
     % Update position
     z = z + dz * dt;
-
+    
     % Cell divison
     j = 1;
     while (j <= n)
     
         % Calculate number of neighbours
         num_nbd_cells = num_nbd(j);
-
+        
         division_event = false;
-
+    
         if (mod(mitosis_timer(j), cell_cycle_duration) == 0 && mitosis_timer(j) > 0)
             
             % Contact inhibition of cell division
@@ -159,12 +164,12 @@ while (itr <= end_time)
                 new_p = polarity_strength * (get_unif_rand(boxsize, n+1) + 1i * get_unif_rand(boxsize, n+1));
                 new_p(1, 1:n) = p;
                 new_p(1, n+1) = -p(j);
-
+                
                 new_p_timer = randi([0, cell_polarity_offset], 1, n+1);
                 new_p_timer(1, 1:n) = p_timer;
                 new_p_timer(1, j) = 0;
                 new_p_timer(1, n+1) = 0;
-
+                
                 new_mitosis_timer = randi([0, cell_cycle_offset], 1, n+1);
                 new_mitosis_timer(1, 1:n) = mitosis_timer;
                 new_mitosis_timer(1, j) = 0;
@@ -176,7 +181,7 @@ while (itr <= end_time)
                 p = new_p;
                 p_timer = new_p_timer;
                 mitosis_timer = new_mitosis_timer;
-
+                
                 n = n + 1;
                 division_event = true;
                 
@@ -204,7 +209,7 @@ while (itr <= end_time)
             elseif real(z(j)) < (-1*boxsize)
                 z(j) = boxsize - abs((-1*boxsize) - real(z(j))) + 1i * imag(z(j));
             end
-
+            
             % Y-axis
             if imag(z(j)) > boxsize
                 z(j) = (-1*boxsize)*1i + 1i * (imag(z(j)) - boxsize) + real(z(j));
@@ -231,7 +236,7 @@ while (itr <= end_time)
         
         % Display cells
         for j = 1 : n
-
+        
             num_nbd_cells = num_nbd(j);
             
             if num_nbd_cells == 0
@@ -253,7 +258,7 @@ while (itr <= end_time)
         
         % Display graph
         for j = 1 : n
-
+        
             k = [1:j-1, j+1:n];
             r = abs(z(j) - z(k));
             nearest_neighbours = r < nbd_eps;
@@ -270,9 +275,9 @@ while (itr <= end_time)
             end
              
         end
-
+        
         for j = 1 : length(xbordercells)
-
+        
             x = real(z(xbordercells(j)));
             y = imag(z(xbordercells(j)));
             u = real(xborder_unit_vec(j));
@@ -287,7 +292,7 @@ while (itr <= end_time)
             intersection_x = x + parametric_t*u;
             intersection_y = y + parametric_t*v;
             plot([x intersection_x], [y intersection_y], 'linewidth', 1, 'Color', [0 0 0] + 0.7);
-
+     
         end
         
         % Display polarity vectors
@@ -302,15 +307,15 @@ while (itr <= end_time)
             
             end
         end
-
+        
         rectangle('Position', [-1*boxsize -1*boxsize 2*boxsize 2*boxsize])
-
+        
         hold off  
-
+        
         axis([-1*boxsize-1 boxsize+1 -1*boxsize-1 boxsize+1]);
-
+        
         title(sprintf('Frame T = %g, Avg. # Neighbours = %g, Avg. Speed = %g, # Cells = %g', itr/100, avg_num_neighbours, avg_speed, n));
-
+      
         if toggle_save_video == "on"
             frame = getframe(gcf);
             writeVideo(vidWriter, frame);

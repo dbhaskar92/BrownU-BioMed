@@ -1,0 +1,3 @@
+[submodule "Spherical Collective Motion/Spherical-Harmonic-Transform"]
+	path = Spherical Collective Motion/Spherical-Harmonic-Transform
+	url = https://github.com/polarch/Spherical-Harmonic-Transform.git
